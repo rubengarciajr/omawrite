@@ -1,7 +1,11 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QApplication>
+#include <QCommandLineParser>
+#include <QCoreApplication>
+#include <QFileInfo>
 #include <QIcon>
+#include <QProcess>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlError>
@@ -13,9 +17,14 @@
 #include "backend.h"
 #include "systemtheme.h"
 
+#ifndef OMAWRITE_VERSION
+#define OMAWRITE_VERSION "0.2.0"
+#endif
+
 int main(int argc, char *argv[]) {
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("omawrite"));
+    app.setApplicationVersion(QStringLiteral(OMAWRITE_VERSION));
     app.setDesktopFileName(QStringLiteral("omawrite"));
     app.setWindowIcon(QIcon::fromTheme(QStringLiteral("omawrite")));
 
@@ -54,7 +63,18 @@ int main(int argc, char *argv[]) {
         backend.setTextScale(textScale);
     });
 
+    QCommandLineParser parser;
+    parser.setApplicationDescription(
+        QStringLiteral("Dead-simple Markdown writing app"));
+    parser.addHelpOption();
+    parser.addVersionOption();
+    parser.addPositionalArgument(QStringLiteral("file"),
+                                 QStringLiteral("Markdown file to open"),
+                                 QStringLiteral("[file...]"));
+    parser.process(app);
+
     QQmlApplicationEngine engine;
+    engine.addImportPath(QStringLiteral("qrc:/"));
     QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app,
                      [](const QList<QQmlError> &warnings) {
         for (const QQmlError &warning : warnings)
@@ -71,9 +91,13 @@ int main(int argc, char *argv[]) {
 
     backend.setParentWindow(qobject_cast<QWindow *>(engine.rootObjects().constFirst()));
 
-    const QStringList args = app.arguments();
-    if (args.size() > 1 && !backend.modified())
-        backend.open(QUrl::fromLocalFile(args.at(1)));
+    const QStringList files = parser.positionalArguments();
+    if (!files.isEmpty() && !backend.modified())
+        backend.open(Backend::localUrlFromPath(files.first()));
+    for (int i = 1; i < files.size(); ++i) {
+        QProcess::startDetached(QCoreApplication::applicationFilePath(),
+                                {QFileInfo(files.at(i)).absoluteFilePath()});
+    }
 
     return app.exec();
 }

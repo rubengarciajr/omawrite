@@ -6,7 +6,7 @@ Button {
     id: control
 
     property string iconName
-    property color iconColor: "#666666"
+    property color iconColor: AppTheme.popupText
 
     implicitWidth: 42
     implicitHeight: 42
@@ -16,7 +16,10 @@ Button {
     Keys.onEnterPressed: clicked()
 
     background: Rectangle {
-        color: "transparent"
+        color: AppTheme.controlFill(control.activeFocus, control.hovered, control.down)
+        border.color: AppTheme.controlBorder(control.activeFocus, control.hovered)
+        border.width: control.activeFocus || control.hovered ? AppTheme.space(1) : 0
+        radius: AppTheme.cornerRadius
     }
 
     contentItem: Item {

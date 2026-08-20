@@ -6,9 +6,9 @@ Dialog {
 
     property string fileName: "Untitled.md"
     property bool darkMode: true
-    property color textColor: darkMode ? "#d0d0d0" : "#42464c"
-    property color strongTextColor: darkMode ? "#eeeeee" : "#222324"
-    property color activeButtonColor: "#428bca"
+    property color textColor: AppTheme.popupText
+    property color strongTextColor: AppTheme.popupText
+    property color activeButtonColor: AppTheme.accent
     property int containerWidth: 420
     property int containerHeight: 320
     property real textScale: 1
@@ -29,9 +29,10 @@ Dialog {
     padding: 20
 
     background: Rectangle {
-        color: root.darkMode ? "#1a1a1a" : "#ffffff"
-        border.color: root.darkMode ? "#343434" : "#d8d8d8"
-        radius: 0
+        color: AppTheme.popupBackground
+        border.color: AppTheme.popupBorder
+        border.width: AppTheme.space(1)
+        radius: AppTheme.cornerRadius
     }
 
     contentItem: Column {

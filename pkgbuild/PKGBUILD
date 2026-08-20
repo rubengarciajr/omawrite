@@ -1,21 +1,30 @@
-# Maintainer: David Heinemeier Hansson <david@hey.com>
+# Maintainer: Ruben Garcia Jr <https://github.com/rubengarciajr>
+# Contributor: David Heinemeier Hansson <david@hey.com>
 
 pkgname=omawrite
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=1
 pkgdesc='Dead-simple Markdown writing app built with Qt Quick'
 arch=('x86_64')
-url='https://github.com/omacom-io/omawrite'
+url='https://github.com/rubengarciajr/omawrite'
 license=('MIT')
+options=('!debug')
 install='omawrite.install'
 depends=('qt6-base' 'qt6-declarative' 'xdg-desktop-portal')
 makedepends=('gcc' 'make' 'qt6-base' 'qt6-declarative')
+checkdepends=('qt6-base' 'qt6-declarative')
+optdepends=('hyprland: live window rounding from the active Omarchy/Hyprland theme')
 source=()
 sha256sums=()
 
 build() {
   cd "$startdir/.."
   ./bin/build
+}
+
+check() {
+  cd "$startdir/.."
+  ./bin/test
 }
 
 package() {

@@ -6,7 +6,7 @@ Item {
     id: control
 
     property string iconName
-    property color iconColor: "#666666"
+    property color iconColor: AppTheme.muted
     property string tooltip
 
     signal clicked()
@@ -54,7 +54,7 @@ Item {
                 context.lineTo(4.5, 9.5);
                 context.lineTo(11.5, 9.5);
                 context.lineTo(11.5, 13.5);
-            } else {
+            } else if (control.iconName === "open") {
                 context.moveTo(2.5, 13);
                 context.lineTo(2.5, 3.5);
                 context.lineTo(6.5, 3.5);
@@ -71,6 +71,18 @@ Item {
             function onIconColorChanged() { iconCanvas.requestPaint(); }
             function onIconNameChanged() { iconCanvas.requestPaint(); }
         }
+    }
+
+    Text {
+        anchors.fill: parent
+        visible: control.iconName === "typography"
+        text: "Aa"
+        color: control.iconColor
+        horizontalAlignment: Text.AlignHCenter
+        verticalAlignment: Text.AlignVCenter
+        font.family: "iA Writer Mono S"
+        font.pixelSize: 11
+        font.weight: Font.DemiBold
     }
 
     MouseArea {

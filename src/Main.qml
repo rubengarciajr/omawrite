@@ -16,16 +16,16 @@ ApplicationWindow {
     title: (backend.modified ? "* " : "") + backend.fileName + " - Omawrite"
 
     readonly property bool darkMode: backend.darkMode
-    readonly property color pageColor: backend.themeBackground
-    readonly property color textColor: backend.themeForeground
-    readonly property color strongTextColor: backend.themeForeground
-    readonly property color mutedColor: darkMode ? "#909191" : "#aeb1b5"
-    readonly property color selectionFill: backend.themeSelection
+    readonly property color pageColor: AppTheme.background
+    readonly property color textColor: AppTheme.foreground
+    readonly property color strongTextColor: AppTheme.foreground
+    readonly property color mutedColor: AppTheme.muted
+    readonly property color selectionFill: AppTheme.selection
     // The desktop's text size knob (GNOME's text-scaling-factor, which
     // `omarchy display text size` drives) anchored so its 12px default leaves
     // the app at the sizes it was designed around.
     readonly property real textScale: backend.textScale
-    readonly property int editorFontPixelSize: scaledSize(20)
+    readonly property int editorFontPixelSize: scaledSize(backend.bodyFontSize)
     readonly property int editorWidth: Math.min(
         Math.round(writerFontMetrics.averageCharacterWidth * 65),
         Math.max(360, width - Math.round(writerFontMetrics.averageCharacterWidth * 20)))
@@ -38,10 +38,29 @@ ApplicationWindow {
     property string pendingAction: ""
     property bool replaceOpen: false
     property bool awaitingPendingSave: false
+    property bool commandOpen: false
+    property string commandQuery: ""
+    property int commandStart: -1
+    property bool typographyOpen: false
 
     Material.theme: darkMode ? Material.Dark : Material.Light
-    Material.accent: backend.themeAccent
+    Material.accent: AppTheme.accent
     color: pageColor
+
+    function closeCommandMenu() {
+        commandOpen = false;
+        commandQuery = "";
+        commandStart = -1;
+    }
+
+    function toggleTypographyPanel() {
+        closeCommandMenu();
+        if (searchOpen)
+            closeSearch();
+        typographyOpen = !typographyOpen;
+        if (!typographyOpen)
+            editor.forceActiveFocus();
+    }
 
     onClosing: function(close) {
         if (closeConfirmed || !backend.modified)
@@ -147,6 +166,7 @@ ApplicationWindow {
         sequence: "Ctrl+H"
         context: Qt.ApplicationShortcut
         onActivated: {
+            typographyOpen = false;
             searchOpen = true;
             replaceOpen = true;
             searchField.forceActiveFocus();
@@ -176,6 +196,12 @@ ApplicationWindow {
         sequence: "Ctrl+?"
         context: Qt.ApplicationShortcut
         onActivated: shortcutsDialog.open()
+    }
+
+    Shortcut {
+        sequence: "Ctrl+,"
+        context: Qt.ApplicationShortcut
+        onActivated: win.toggleTypographyPanel()
     }
 
     Shortcut {
@@ -224,6 +250,7 @@ ApplicationWindow {
         sequence: "Ctrl+F"
         context: Qt.ApplicationShortcut
         onActivated: {
+            typographyOpen = false;
             searchOpen = true;
             searchField.forceActiveFocus();
             searchField.selectAll();
@@ -235,6 +262,24 @@ ApplicationWindow {
         context: Qt.ApplicationShortcut
         enabled: win.searchOpen
         onActivated: win.moveSearch(1)
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        context: Qt.WindowShortcut
+        enabled: win.commandOpen || win.searchOpen || win.typographyOpen
+        onActivated: {
+            if (win.commandOpen) {
+                win.closeCommandMenu();
+                return;
+            }
+            if (win.searchOpen) {
+                win.closeSearch();
+                return;
+            }
+            win.typographyOpen = false;
+            editor.forceActiveFocus();
+        }
     }
 
     Connections {
@@ -265,6 +310,7 @@ ApplicationWindow {
             externalChangeDialog.locallyModified = locallyModified;
             externalChangeDialog.open();
         }
+
     }
 
     Dialogs.FileDialog {
@@ -295,7 +341,7 @@ ApplicationWindow {
         textScale: win.textScale
         textColor: win.textColor
         strongTextColor: win.strongTextColor
-        activeButtonColor: backend.themeAccent
+        activeButtonColor: AppTheme.accent
         containerWidth: win.width
         containerHeight: win.height
 
@@ -329,15 +375,37 @@ ApplicationWindow {
         modal: true
         title: "Keyboard shortcuts"
         standardButtons: Dialog.Close
-        anchors.centerIn: parent
+        width: Math.min(AppTheme.space(520), win.width - AppTheme.space(48))
+        x: Math.round((win.width - width) / 2)
+        y: Math.round((win.height - height) / 2)
+        padding: AppTheme.space(20)
+        background: Rectangle {
+            color: AppTheme.popupBackground
+            border.color: AppTheme.popupBorder
+            border.width: AppTheme.space(1)
+            radius: AppTheme.cornerRadius
+        }
         contentItem: Label {
-            text: "Ctrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
+            width: shortcutsDialog.availableWidth
+            text: "/  Omawrite Commands (at the start of a line)\nCtrl+,  Type Foundation\nCtrl+S  Save\nCtrl+Shift+S  Save As\nCtrl+O  Open\nCtrl+N  New Window\nCtrl+F  Find\nCtrl+H  Find and Replace\nCtrl+B  Bold\nCtrl+I  Italic\nCtrl+K  Link\nCtrl+P  Print\nF11 / Super+F  Fullscreen\nCtrl+?  Shortcuts"
+            color: AppTheme.popupText
             lineHeight: 1.5
         }
     }
 
     Item {
         anchors.fill: parent
+
+        DropArea {
+            anchors.fill: parent
+            keys: ["text/uri-list"]
+            onDropped: function(drop) {
+                if (!drop.hasUrls || drop.urls.length === 0)
+                    return;
+                win.requestOpen(drop.urls[0]);
+                drop.acceptProposedAction();
+            }
+        }
 
         Flickable {
             id: editorFlick
@@ -566,6 +634,55 @@ ApplicationWindow {
                     EditorMutations.replaceRange(editor, start, end, replacement);
                 }
 
+                function updateCommandMenu() {
+                    if (selectionStart !== selectionEnd || win.searchOpen) {
+                        win.closeCommandMenu();
+                        return;
+                    }
+
+                    var lineStart = text.lastIndexOf("\n", cursorPosition - 1) + 1;
+                    var lineBeforeCursor = text.slice(lineStart, cursorPosition);
+                    var match = lineBeforeCursor.match(/^(\s*)\/([A-Za-z0-9-]*)$/);
+                    if (!match) {
+                        win.closeCommandMenu();
+                        return;
+                    }
+
+                    win.commandStart = lineStart + match[1].length;
+                    win.commandQuery = match[2];
+                    win.typographyOpen = false;
+                    win.commandOpen = true;
+                }
+
+                function applySlashCommand(commandId) {
+                    if (!win.commandOpen || win.commandStart < 0)
+                        return;
+
+                    var start = win.commandStart;
+                    var end = cursorPosition;
+                    win.closeCommandMenu();
+
+                    var replacement = "";
+                    if (commandId === "todo")
+                        replacement = "- [ ] ";
+                    else if (commandId === "heading1")
+                        replacement = "# ";
+                    else if (commandId === "heading2")
+                        replacement = "## ";
+                    else if (commandId === "heading3")
+                        replacement = "### ";
+                    else if (commandId === "bullet")
+                        replacement = "- ";
+                    else if (commandId === "numbered")
+                        replacement = "1. ";
+                    else if (commandId === "quote")
+                        replacement = "> ";
+
+                    EditorMutations.replaceRange(editor, start, end, replacement);
+                    forceActiveFocus();
+                    editorFlick.ensureCursorVisible();
+                }
+
                 function wrapSelection(before, after) {
                     forceActiveFocus();
                     var start = Math.min(selectionStart, selectionEnd);
@@ -733,6 +850,32 @@ ApplicationWindow {
 
                 Keys.priority: Keys.BeforeItem
                 Keys.onPressed: function(event) {
+                    var commandModifier = event.modifiers
+                        & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier);
+                    if (win.commandOpen && !commandModifier) {
+                        if (event.key === Qt.Key_Down) {
+                            commandPalette.moveSelection(1);
+                            event.accepted = true;
+                            return;
+                        }
+                        if (event.key === Qt.Key_Up) {
+                            commandPalette.moveSelection(-1);
+                            event.accepted = true;
+                            return;
+                        }
+                        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                                || event.key === Qt.Key_Tab) {
+                            if (commandPalette.activateSelected())
+                                event.accepted = true;
+                            return;
+                        }
+                        if (event.key === Qt.Key_Escape) {
+                            win.closeCommandMenu();
+                            event.accepted = true;
+                            return;
+                        }
+                    }
+
                     var pasteKey = (event.key === Qt.Key_V)
                         && (event.modifiers & Qt.ControlModifier)
                         && !(event.modifiers & (Qt.AltModifier | Qt.MetaModifier | Qt.ShiftModifier));
@@ -747,7 +890,6 @@ ApplicationWindow {
                     }
 
                     var returnKey = event.key === Qt.Key_Return || event.key === Qt.Key_Enter;
-                    var commandModifier = event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier);
                     if (returnKey && !commandModifier) {
                         smartReturn(event.modifiers & Qt.ShiftModifier);
                         event.accepted = true;
@@ -774,9 +916,14 @@ ApplicationWindow {
                     if (win.searchUpdating)
                         return;
                     var contentChanged = backend.editorTextChanged();
-                    if (win.searchOpen && contentChanged)
-                        win.updateSearch();
+                    if (contentChanged) {
+                        if (win.searchOpen)
+                            win.updateSearch();
+                    }
+                    updateCommandMenu();
                 }
+
+                onCursorPositionChanged: updateCommandMenu()
 
                 Text {
                     anchors.left: parent.left
@@ -793,6 +940,54 @@ ApplicationWindow {
                     backend.attachDocument(textDocument);
                     forceActiveFocus();
                 }
+            }
+        }
+
+        CommandPalette {
+            id: commandPalette
+            objectName: "commandPalette"
+            z: 40
+            open: win.commandOpen
+            query: win.commandQuery
+            width: Math.min(implicitWidth, parent.width - AppTheme.space(24))
+            readonly property point caretPoint: {
+                var cursor = editor.cursorRectangle;
+                return editor.mapToItem(parent, cursor.x, cursor.y + cursor.height);
+            }
+            x: Math.max(AppTheme.space(12),
+                        Math.min(parent.width - width - AppTheme.space(12), caretPoint.x))
+            y: {
+                var gap = AppTheme.space(8);
+                var below = caretPoint.y + gap;
+                if (below + height <= parent.height - AppTheme.space(12))
+                    return below;
+                return Math.max(AppTheme.space(12), caretPoint.y - height - gap);
+            }
+            onCommandTriggered: function(commandId) {
+                editor.applySlashCommand(commandId);
+            }
+        }
+
+        TypographyPanel {
+            id: typographyPanel
+            objectName: "typographyPanel"
+            z: 35
+            open: win.typographyOpen
+            bodySize: backend.bodyFontSize
+            heading1Size: backend.heading1FontSize
+            heading2Size: backend.heading2FontSize
+            heading3Size: backend.heading3FontSize
+            width: Math.min(implicitWidth, parent.width - AppTheme.space(24))
+            x: AppTheme.space(12)
+            y: Math.max(AppTheme.space(12),
+                        parent.height - height - AppTheme.space(42))
+            onChangeRequested: function(level, size) {
+                backend.setTypographyLevel(level, size);
+            }
+            onResetRequested: backend.resetTypography()
+            onCloseRequested: {
+                win.typographyOpen = false;
+                editor.forceActiveFocus();
             }
         }
 
@@ -819,6 +1014,14 @@ ApplicationWindow {
                 iconColor: win.mutedColor
                 tooltip: "Open"
                 onClicked: backend.openDialog()
+            }
+
+            FooterIconButton {
+                objectName: "typographyButton"
+                iconName: "typography"
+                iconColor: win.typographyOpen ? AppTheme.accent : win.mutedColor
+                tooltip: "Typography"
+                onClicked: win.toggleTypographyPanel()
             }
 
             Label {
@@ -864,8 +1067,10 @@ ApplicationWindow {
             Material.elevation: 8
 
             background: Rectangle {
-                radius: 9
-                color: win.darkMode ? "#22221f" : "#fffef2"
+                radius: AppTheme.cornerRadius
+                color: AppTheme.popupBackground
+                border.color: AppTheme.popupBorder
+                border.width: AppTheme.space(1)
             }
 
             RowLayout {
@@ -940,7 +1145,7 @@ ApplicationWindow {
                     text: win.searchMatches.length === 0
                         ? "0/0"
                         : (win.searchMatchIndex + 1) + "/" + win.searchMatches.length
-                    color: win.darkMode ? win.textColor : "#62635f"
+                    color: AppTheme.popupText
                     font.pixelSize: win.scaledSize(16)
                 }
 
@@ -976,24 +1181,24 @@ ApplicationWindow {
                 Rectangle {
                     Layout.preferredWidth: 1
                     Layout.preferredHeight: 34
-                    color: win.darkMode ? "#6f6f62" : "#d5d56e"
+                    color: AppTheme.normalBorder
                 }
 
                 SearchIconButton {
                     iconName: "up"
-                    iconColor: win.darkMode ? win.textColor : "#62635f"
+                    iconColor: AppTheme.popupText
                     onClicked: win.moveSearch(-1)
                 }
 
                 SearchIconButton {
                     iconName: "down"
-                    iconColor: win.darkMode ? win.textColor : "#62635f"
+                    iconColor: AppTheme.popupText
                     onClicked: win.moveSearch(1)
                 }
 
                 SearchIconButton {
                     iconName: "close"
-                    iconColor: win.darkMode ? win.textColor : "#62635f"
+                    iconColor: AppTheme.popupText
                     onClicked: win.closeSearch()
                 }
             }

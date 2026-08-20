@@ -5,6 +5,15 @@
 #include <QFontMetricsF>
 #include <QTextDocument>
 
+namespace {
+QColor blend(const QColor &base, const QColor &overlay, qreal amount) {
+    const qreal t = qBound(0.0, amount, 1.0);
+    return QColor::fromRgbF(base.redF() * (1 - t) + overlay.redF() * t,
+                            base.greenF() * (1 - t) + overlay.greenF() * t,
+                            base.blueF() * (1 - t) + overlay.blueF() * t);
+}
+}
+
 MarkdownHighlighter::MarkdownHighlighter(QTextDocument *document)
     : QSyntaxHighlighter(document) {
     rebuildFormats();
@@ -20,14 +29,34 @@ void MarkdownHighlighter::setDarkMode(bool darkMode) {
 }
 
 void MarkdownHighlighter::setColors(const QString &background, const QString &foreground,
-                                    const QString &accent) {
+                                    const QString &accent, const QString &muted,
+                                    const QString &selection) {
     if (m_customBackground == background && m_customForeground == foreground
-            && m_customAccent == accent)
+            && m_customAccent == accent && m_customMuted == muted
+            && m_customSelection == selection)
         return;
 
     m_customBackground = background;
     m_customForeground = foreground;
     m_customAccent = accent;
+    m_customMuted = muted;
+    m_customSelection = selection;
+    rebuildFormats();
+    rehighlight();
+}
+
+void MarkdownHighlighter::setTypography(int bodyPixelSize, int heading1PixelSize,
+                                        int heading2PixelSize, int heading3PixelSize) {
+    if (m_bodyPixelSize == bodyPixelSize && m_heading1PixelSize == heading1PixelSize
+            && m_heading2PixelSize == heading2PixelSize
+            && m_heading3PixelSize == heading3PixelSize) {
+        return;
+    }
+
+    m_bodyPixelSize = qMax(1, bodyPixelSize);
+    m_heading1PixelSize = qMax(1, heading1PixelSize);
+    m_heading2PixelSize = qMax(1, heading2PixelSize);
+    m_heading3PixelSize = qMax(1, heading3PixelSize);
     rebuildFormats();
     rehighlight();
 }
@@ -41,20 +70,24 @@ void MarkdownHighlighter::setSearch(const QString &query, int currentMatchStart)
 }
 
 void MarkdownHighlighter::rebuildFormats() {
-    const QColor marker = m_darkMode ? QColor(QStringLiteral("#4f525a"))
-                                     : QColor(QStringLiteral("#aeb1b5"));
+    const QColor marker = !m_customMuted.isEmpty() ? QColor(m_customMuted)
+        : (m_darkMode ? QColor(QStringLiteral("#4f525a"))
+                      : QColor(QStringLiteral("#aeb1b5")));
     const QColor background = !m_customBackground.isEmpty() ? QColor(m_customBackground)
         : (m_darkMode ? QColor(QStringLiteral("#101010")) : QColor(QStringLiteral("#ffffff")));
     const QColor text = !m_customForeground.isEmpty() ? QColor(m_customForeground)
         : (m_darkMode ? QColor(QStringLiteral("#eeeeee")) : QColor(QStringLiteral("#222324")));
     const QColor link = !m_customAccent.isEmpty() ? QColor(m_customAccent)
         : (m_darkMode ? QColor(QStringLiteral("#5584aa")) : QColor(QStringLiteral("#2077b2")));
-    const QColor quote = marker;
-    const QColor codeBackground = m_darkMode ? QColor(QStringLiteral("#1c1a1a"))
-                                             : QColor(QStringLiteral("#f8f8f8"));
+    const QColor quote = text;
+    const QColor search = !m_customSelection.isEmpty() ? QColor(m_customSelection) : link;
+    const QColor codeBackground = blend(background, text, 0.07);
 
     m_markerFormat = QTextCharFormat();
     m_markerFormat.setForeground(marker);
+
+    m_listMarkerFormat = QTextCharFormat();
+    m_listMarkerFormat.setForeground(link);
 
     // A sub-pixel font size combined with a stretch factor used to make these
     // markers occupy (close to) zero space, but that combination deadlocks Qt's
@@ -71,9 +104,18 @@ void MarkdownHighlighter::rebuildFormats() {
     m_hiddenMarkerFormat.setFontLetterSpacingType(QFont::AbsoluteSpacing);
     m_hiddenMarkerFormat.setFontLetterSpacing(-charWidth);
 
-    m_headingFormat = QTextCharFormat();
-    m_headingFormat.setForeground(text);
-    m_headingFormat.setFontWeight(QFont::Bold);
+    const auto headingFormat = [this, &text](int pixelSize) {
+        QTextCharFormat format;
+        format.setForeground(text);
+        QFont font = document() ? document()->defaultFont() : QFont();
+        font.setPixelSize(pixelSize);
+        font.setWeight(QFont::Bold);
+        format.setFont(font);
+        return format;
+    };
+    m_heading1Format = headingFormat(m_heading1PixelSize);
+    m_heading2Format = headingFormat(m_heading2PixelSize);
+    m_heading3Format = headingFormat(m_heading3PixelSize);
 
     m_boldFormat = QTextCharFormat();
     m_boldFormat.setFontWeight(QFont::Bold);
@@ -96,11 +138,9 @@ void MarkdownHighlighter::rebuildFormats() {
     m_linkFormat.setFontUnderline(true);
 
     m_searchFormat = QTextCharFormat();
-    m_searchFormat.setBackground(m_darkMode ? QColor(QStringLiteral("#725b18"))
-                                            : QColor(QStringLiteral("#ffe58a")));
+    m_searchFormat.setBackground(blend(background, search, 0.42));
     m_currentSearchFormat = QTextCharFormat();
-    m_currentSearchFormat.setBackground(m_darkMode ? QColor(QStringLiteral("#b36b20"))
-                                                   : QColor(QStringLiteral("#ffad42")));
+    m_currentSearchFormat.setBackground(blend(background, link, 0.68));
 }
 
 void MarkdownHighlighter::highlightBlock(const QString &text) {
@@ -144,8 +184,10 @@ void MarkdownHighlighter::highlightMarkers(const QString &text) {
         if (heading.hasMatch()) {
             setFormat(0, heading.capturedLength(1) + heading.capturedLength(2),
                       m_markerFormat);
-            setFormat(heading.capturedStart(3), heading.capturedLength(3),
-                      m_headingFormat);
+            const int level = heading.capturedLength(1);
+            const QTextCharFormat &format = level == 1 ? m_heading1Format
+                : level == 2 ? m_heading2Format : m_heading3Format;
+            setFormat(heading.capturedStart(3), heading.capturedLength(3), format);
             return;
         }
     }
@@ -154,18 +196,18 @@ void MarkdownHighlighter::highlightMarkers(const QString &text) {
         static const QRegularExpression quoteRe(QStringLiteral("^(\\s*>+\\s?)(.*)$"));
         const QRegularExpressionMatch quote = quoteRe.match(text);
         if (quote.hasMatch()) {
-            setFormat(0, quote.capturedLength(1), m_markerFormat);
+            setFormat(0, quote.capturedLength(1), m_listMarkerFormat);
             setFormat(quote.capturedStart(2), quote.capturedLength(2), m_quoteFormat);
         }
     }
 
     if (firstChar == QLatin1Char('-') || firstChar == QLatin1Char('+')
             || firstChar == QLatin1Char('*') || firstChar.isDigit()) {
-        static const QRegularExpression listRe(
-            QStringLiteral("^(\\s*(?:[-+*]|\\d+[.)])\\s+)(.*)$"));
+        static const QRegularExpression listRe(QStringLiteral(
+            "^(\\s*(?:[-+*](?:\\s+\\[[ xX]\\])?|\\d+[.)])\\s+)(.*)$"));
         const QRegularExpressionMatch list = listRe.match(text);
         if (list.hasMatch())
-            setFormat(0, list.capturedLength(1), m_markerFormat);
+            setFormat(0, list.capturedLength(1), m_listMarkerFormat);
     }
 
     if (firstChar == QLatin1Char('-') || firstChar == QLatin1Char('*')

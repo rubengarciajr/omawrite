@@ -6,8 +6,8 @@ Button {
 
     property bool primary: false
     property bool darkMode: true
-    property color labelColor: primary ? "#ffffff" : "#d0d0d0"
-    property color activeColor: "#428bca"
+    property color labelColor: primary ? AppTheme.background : AppTheme.foreground
+    property color activeColor: AppTheme.accent
     property real textScale: 1
 
     leftPadding: 16
@@ -30,18 +30,15 @@ Button {
     background: Rectangle {
         implicitWidth: 88
         implicitHeight: 34
-        radius: 0
+        radius: AppTheme.cornerRadius
         color: control.primary
-            ? (control.down ? "#347ab3" : control.hovered ? "#4b96d0" : control.activeColor)
-            : control.down
-                ? (control.darkMode ? "#2a2a2a" : "#dedede")
-                : control.hovered
-                    ? (control.darkMode ? "#242424" : "#eeeeee")
-                    : (control.darkMode ? "#202020" : "#f6f6f6")
-        border.color: control.activeFocus
-            ? (control.darkMode ? "#eeeeee" : "#222324")
-            : control.primary
-                ? "#367eb7"
-                : (control.darkMode ? "#424242" : "#c8c8c8")
+            ? control.activeColor
+            : AppTheme.controlFill(control.activeFocus, control.hovered, control.down)
+        opacity: control.primary && control.down ? 0.78
+                 : control.primary && control.hovered ? 0.9 : 1
+        border.color: control.primary
+            ? control.activeColor
+            : AppTheme.controlBorder(control.activeFocus, control.hovered)
+        border.width: AppTheme.space(1)
     }
 }

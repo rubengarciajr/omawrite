@@ -7,9 +7,9 @@ Dialog {
     property bool deleted: false
     property bool locallyModified: false
     property bool darkMode: true
-    property color textColor: darkMode ? "#d0d0d0" : "#42464c"
-    property color strongTextColor: darkMode ? "#eeeeee" : "#222324"
-    property color activeButtonColor: "#428bca"
+    property color textColor: AppTheme.popupText
+    property color strongTextColor: AppTheme.popupText
+    property color activeButtonColor: AppTheme.accent
     property int containerWidth: 520
     property int containerHeight: 320
     property real textScale: 1
@@ -28,9 +28,10 @@ Dialog {
     onOpened: (deleted ? keepButton : reloadButton).forceActiveFocus()
 
     background: Rectangle {
-        color: root.darkMode ? "#1a1a1a" : "#ffffff"
-        border.color: root.darkMode ? "#343434" : "#d8d8d8"
-        radius: 0
+        color: AppTheme.popupBackground
+        border.color: AppTheme.popupBorder
+        border.width: AppTheme.space(1)
+        radius: AppTheme.cornerRadius
     }
 
     contentItem: Column {
@@ -73,7 +74,7 @@ Dialog {
                 text: "Keep Mine"
                 darkMode: root.darkMode
                 textScale: root.textScale
-                labelColor: root.deleted ? "#ffffff" : root.textColor
+                labelColor: root.deleted ? AppTheme.background : root.textColor
                 primary: root.deleted
                 activeColor: root.activeButtonColor
                 KeyNavigation.left: reloadButton

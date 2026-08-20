@@ -4,6 +4,9 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QQuickStyle>
+#include <QTextBlock>
+#include <QTextDocument>
+#include <QTextLayout>
 
 #include "backend.h"
 #include "markdownhighlighter.h"
@@ -44,6 +47,22 @@ private slots:
                  QStringLiteral("Already.md"));
     }
 
+    void resolvesUserFilePaths() {
+        QVERIFY(Backend::localUrlFromPath(QString()).isEmpty());
+
+        const QString relative = QStringLiteral("notes.md");
+        const QUrl relativeUrl = Backend::localUrlFromPath(relative);
+        QVERIFY(relativeUrl.isLocalFile());
+        QCOMPARE(relativeUrl.toLocalFile(), QFileInfo(relative).absoluteFilePath());
+
+        const QString absolute = QDir::temp().filePath(QStringLiteral("draft.md"));
+        QCOMPARE(Backend::localUrlFromPath(absolute).toLocalFile(),
+                 QFileInfo(absolute).absoluteFilePath());
+
+        const QUrl fileUrl = Backend::localUrlFromPath(QUrl::fromLocalFile(absolute).toString());
+        QCOMPARE(fileUrl.toLocalFile(), QFileInfo(absolute).absoluteFilePath());
+    }
+
     void findsInlineMarkdownRanges() {
         const auto markup = MarkdownHighlighter::inlineMarkup(
             QStringLiteral("**bold** and *italic* and [site](https://example.com)"));
@@ -52,6 +71,45 @@ private slots:
         QCOMPARE(markup.at(0).content.length, 4);
         QCOMPARE(markup.at(2).content.length, 4);
         QCOMPARE(markup.at(2).markers[0].length, 1);
+    }
+
+    void stylesHeadingLevelsAndListMarkers() {
+        QTextDocument document;
+        QFont bodyFont(QStringLiteral("iA Writer Mono S"));
+        bodyFont.setPixelSize(20);
+        document.setDefaultFont(bodyFont);
+
+        MarkdownHighlighter highlighter(&document);
+        highlighter.setColors(QStringLiteral("#101820"), QStringLiteral("#e8eef2"),
+                              QStringLiteral("#45aabb"), QStringLiteral("#778899"),
+                              QStringLiteral("#334455"));
+        highlighter.setTypography(20, 36, 30, 24);
+        document.setPlainText(QStringLiteral(
+            "# Heading one\n## Heading two\n### Heading three\n- Bullet\n- [ ] Task\n> Readable quote"));
+        highlighter.rehighlight();
+
+        const auto formatAt = [](const QTextBlock &block, int position) {
+            const QList<QTextLayout::FormatRange> formats = block.layout()->formats();
+            for (const QTextLayout::FormatRange &range : formats) {
+                if (position >= range.start && position < range.start + range.length)
+                    return range.format;
+            }
+            return QTextCharFormat();
+        };
+
+        QTextBlock block = document.firstBlock();
+        QCOMPARE(formatAt(block, 2).font().pixelSize(), 36);
+        block = block.next();
+        QCOMPARE(formatAt(block, 3).font().pixelSize(), 30);
+        block = block.next();
+        QCOMPARE(formatAt(block, 4).font().pixelSize(), 24);
+        block = block.next();
+        QCOMPARE(formatAt(block, 0).foreground().color(), QColor(QStringLiteral("#45aabb")));
+        block = block.next();
+        QCOMPARE(formatAt(block, 3).foreground().color(), QColor(QStringLiteral("#45aabb")));
+        block = block.next();
+        QCOMPARE(formatAt(block, 0).foreground().color(), QColor(QStringLiteral("#45aabb")));
+        QCOMPARE(formatAt(block, 2).foreground().color(), QColor(QStringLiteral("#e8eef2")));
     }
 
     void loadsCurrentOmarchyTheme() {
@@ -75,6 +133,8 @@ private slots:
             "mode = \"light\"\n"
             "accent = \"#112233\"\n"
             "selection = \"#445566\"\n"
+            "muted = \"#778899\"\n"
+            "red = \"#aa3344\"\n"
             "background = \"#fefefe\"\n"
             "foreground = \"#101010\"\n");
         QCOMPARE(colorsFile.write(palette), qint64(palette.size()));
@@ -85,7 +145,44 @@ private slots:
         QCOMPARE(backend.themeForeground(), QStringLiteral("#101010"));
         QCOMPARE(backend.themeAccent(), QStringLiteral("#112233"));
         QCOMPARE(backend.themeSelection(), QStringLiteral("#445566"));
+        QCOMPARE(backend.themeMuted(), QStringLiteral("#778899"));
+        QCOMPARE(backend.themeUrgent(), QStringLiteral("#aa3344"));
         QVERIFY(!backend.darkMode());
+    }
+
+    void resolvesOmarchyMenuRoles() {
+        QTemporaryDir homeDirectory;
+        QVERIFY(homeDirectory.isValid());
+
+        const QByteArray originalHome = qgetenv("HOME");
+        struct HomeRestorer {
+            QByteArray value;
+            ~HomeRestorer() { qputenv("HOME", value); }
+        } restoreHome{originalHome};
+        QVERIFY(qputenv("HOME", homeDirectory.path().toUtf8()));
+
+        const QString themeDirectory = homeDirectory.path()
+            + QStringLiteral("/.local/state/omarchy/current/theme");
+        QVERIFY(QDir().mkpath(themeDirectory));
+
+        QFile colorsFile(themeDirectory + QStringLiteral("/colors.toml"));
+        QVERIFY(colorsFile.open(QIODevice::WriteOnly | QIODevice::Text));
+        colorsFile.write("background = \"#101820\"\nforeground = \"#e8eef2\"\n"
+                         "accent = \"#45aabb\"\n");
+        colorsFile.close();
+
+        QFile shellFile(themeDirectory + QStringLiteral("/shell.toml"));
+        QVERIFY(shellFile.open(QIODevice::WriteOnly | QIODevice::Text));
+        shellFile.write("[menu] # surface overrides\nbackground = \"#182430\" # card\n"
+                        "border = accent\nselected-background = foreground\n"
+                        "selected-background-alpha = 0.08\nselected-text = accent\n");
+        shellFile.close();
+
+        Backend backend;
+        QCOMPARE(backend.themeMenuBackground(), QStringLiteral("#182430"));
+        QCOMPARE(backend.themeMenuBorder(), QStringLiteral("#45aabb"));
+        QCOMPARE(backend.themeMenuSelectedBackground(), QStringLiteral("#14e8eef2"));
+        QCOMPARE(backend.themeMenuSelectedText(), QStringLiteral("#45aabb"));
     }
 
     void ignoresFileWatcherEventsForSavedContents() {
@@ -180,8 +277,12 @@ private slots:
 
         QObject *saveButton = window->findChild<QObject *>(QStringLiteral("saveButton"));
         QObject *openButton = window->findChild<QObject *>(QStringLiteral("openButton"));
+        QObject *typographyButton = window->findChild<QObject *>(QStringLiteral("typographyButton"));
+        QObject *typographyPanel = window->findChild<QObject *>(QStringLiteral("typographyPanel"));
         QVERIFY(saveButton);
         QVERIFY(openButton);
+        QVERIFY(typographyButton);
+        QVERIFY(typographyPanel);
 
         QSignalSpy saveDialogSpy(&backend, &Backend::saveDialogRequested);
         QVERIFY(QMetaObject::invokeMethod(saveButton, "clicked"));
@@ -190,6 +291,78 @@ private slots:
         QSignalSpy openDialogSpy(&backend, &Backend::openDialogRequested);
         QVERIFY(QMetaObject::invokeMethod(openButton, "clicked"));
         QCOMPARE(openDialogSpy.count(), 1);
+
+        QVERIFY(QMetaObject::invokeMethod(typographyButton, "clicked"));
+        QVERIFY(window->property("typographyOpen").toBool());
+    }
+
+    void opensAndAppliesSlashCommands() {
+        const QString mainQmlPath = QFINDTESTDATA("../src/Main.qml");
+        QVERIFY(!mainQmlPath.isEmpty());
+
+        Backend backend;
+        QQmlEngine engine;
+        engine.rootContext()->setContextProperty(QStringLiteral("backend"), &backend);
+        QQmlComponent component(&engine, QUrl::fromLocalFile(mainQmlPath));
+        QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+        QScopedPointer<QObject> window(component.create());
+        QVERIFY2(window, qPrintable(component.errorString()));
+
+        QObject *editor = window->findChild<QObject *>(QStringLiteral("sourceEditor"));
+        QObject *palette = window->findChild<QObject *>(QStringLiteral("commandPalette"));
+        QVERIFY(editor);
+        QVERIFY(palette);
+
+        const QVariantList commands = palette->property("commands").toList();
+        QCOMPARE(commands.size(), 8);
+        QStringList commandIds;
+        for (const QVariant &command : commands)
+            commandIds.append(command.toMap().value(QStringLiteral("id")).toString());
+        QCOMPARE(commandIds,
+                 QStringList({QStringLiteral("text"), QStringLiteral("todo"),
+                              QStringLiteral("heading1"), QStringLiteral("heading2"),
+                              QStringLiteral("heading3"), QStringLiteral("bullet"),
+                              QStringLiteral("numbered"), QStringLiteral("quote")}));
+
+        editor->setProperty("text", QStringLiteral("/hea"));
+        editor->setProperty("cursorPosition", 4);
+        QVERIFY(window->property("commandOpen").toBool());
+        QCOMPARE(window->property("commandQuery").toString(), QStringLiteral("hea"));
+
+        QVERIFY(QMetaObject::invokeMethod(palette, "activateSelected"));
+        QCOMPARE(editor->property("text").toString(), QStringLiteral("# "));
+        QVERIFY(!window->property("commandOpen").toBool());
+
+        editor->setProperty("text", QStringLiteral("  /quote"));
+        editor->setProperty("cursorPosition", 8);
+        QVERIFY(window->property("commandOpen").toBool());
+        QVERIFY(QMetaObject::invokeMethod(
+            editor, "applySlashCommand",
+            Q_ARG(QVariant, QVariant(QStringLiteral("quote")))));
+        QCOMPARE(editor->property("text").toString(), QStringLiteral("  > "));
+    }
+
+    void persistsTypographyFoundation() {
+        Backend backend;
+        backend.resetTypography();
+        QCOMPARE(backend.bodyFontSize(), 20);
+        QCOMPARE(backend.heading1FontSize(), 34);
+        QCOMPARE(backend.heading2FontSize(), 28);
+        QCOMPARE(backend.heading3FontSize(), 24);
+
+        QSignalSpy typographySpy(&backend, &Backend::typographyChanged);
+        backend.setTypographyLevel(QStringLiteral("body"), 22);
+        backend.setTypographyLevel(QStringLiteral("heading1"), 40);
+        backend.setTypographyLevel(QStringLiteral("heading2"), 29);
+        backend.setTypographyLevel(QStringLiteral("heading3"), 23);
+        QCOMPARE(typographySpy.count(), 4);
+
+        Backend restored;
+        QCOMPARE(restored.bodyFontSize(), 22);
+        QCOMPARE(restored.heading1FontSize(), 40);
+        QCOMPARE(restored.heading2FontSize(), 29);
+        QCOMPARE(restored.heading3FontSize(), 23);
+        restored.resetTypography();
     }
 
     void scalesTextWithDesktopTextSize() {
@@ -216,6 +389,12 @@ private slots:
         backend.setTextScale(9.0 / 12.0);
         QCOMPARE(window->property("editorFontPixelSize").toInt(), 15);
         QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 15);
+
+        backend.setTextScale(1.0);
+        backend.setTypographyLevel(QStringLiteral("body"), 24);
+        QCOMPARE(window->property("editorFontPixelSize").toInt(), 24);
+        QCOMPARE(editor->property("font").value<QFont>().pixelSize(), 24);
+        backend.resetTypography();
     }
 
     void remembersLastSaveDirectory() {
